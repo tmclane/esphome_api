@@ -66,6 +66,38 @@ func GetClient(clientID, address, encryptionKey string, timeout time.Duration, h
 	return c, nil
 }
 
+func Incoming(conn net.Conn, encryptionKey string, timeout time.Duration, handlerFunc func(proto.Message)) (*Client, error) {
+	// add noop func, if handler not defined
+	if handlerFunc == nil {
+		handlerFunc = func(msg proto.Message) {}
+	}
+
+	apiConn, err := connection.GetConnection(conn, timeout, encryptionKey)
+	if err != nil {
+		return nil, err
+	}
+
+	c := &Client{
+		ID:                   conn.RemoteAddr().String(),
+		conn:                 conn,
+		reader:               bufio.NewReader(conn),
+		waitMap:              make(map[uint64]chan proto.Message),
+		stopChan:             make(chan bool),
+		handlerFunc:          handlerFunc,
+		CommunicationTimeout: timeout,
+		apiConn:              apiConn,
+	}
+
+	// call handshake, used in encrypted connection
+	err = apiConn.Handshake()
+	if err != nil {
+		return nil, err
+	}
+
+	go c.messageReader()
+	return c, nil
+}
+
 // Close the client
 func (c *Client) Close() error {
 	_, err := c.SendAndWaitForResponse(&api.DisconnectRequest{}, api.DisconnectResponseTypeID)
@@ -169,6 +201,14 @@ func (c *Client) SubscribeLogs(level types.LogLevel) error {
 // ListEntities func
 func (c *Client) ListEntities() error {
 	return c.Send(&api.ListEntitiesRequest{})
+	/*
+		message, err := c.SendAndWaitForResponse(&api.ListEntitiesRequest{}, api.ListEntitiesDoneResponseTypeID)
+		if err != nil {
+			fmt.Println("error:", err)
+		}
+
+		return nil
+	*/
 }
 
 // messageReader reads message from the node
